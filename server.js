@@ -32,3 +32,9 @@ app.listen(PORT, () => {
   );
 
 });
+
+app.get('/', (req, res) => {
+
+  res.send('Crypto API running');
+
+});
