@@ -46,19 +46,28 @@ app.get('/api/eth-price', async (req, res) => {
   }
 });
 
-// 2) RATES (SỬA: /api/rates/eth)
-app.get('/api/rates/eth', async (req, res) => {
+/// Thêm route /api/rates để giao diện gọi không bị lỗi 404
+app.get('/api/rates', async (req, res) => {
   try {
     const apiKey = process.env.COINGECKO_API_KEY;
-    const response = await axios.get('https://coingecko.com',
-      { params: { ids: 'ethereum', vs_currencies: 'usd,vnd' } }
-    );
+    const response = await axios.get('https://coingecko.com', {
+      params: {
+        ids: 'bitcoin,ethereum,solana', // Lấy nhiều đồng một lúc cho đủ dùng
+        vs_currencies: 'usd,vnd'
+      },
+      headers: {
+        'x-cg-demo-api-key': apiKey,
+        'Accept': 'application/json'
+      }
+    });
+
     res.json(response.data);
   } catch (error) {
-    console.error('Rates ETH error:', error.message);
-    res.status(500).json({ error: 'Không lấy được dữ liệu' });
+    console.error('Rates error:', error.message);
+    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp' });
   }
 });
+
 
 // Đảm bảo server listen đúng PORT
 const PORT = process.env.PORT || 3002;
