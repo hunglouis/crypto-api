@@ -1,20 +1,29 @@
+require('dotenv').config();
+const express = require('express');
 const axios = require('axios');
+const cors = require('cors');
 
-// 1) API LẤY GIÁ ETH (SỬA DÙNG BINANCE)
+const app = express();
+const PORT = process.env.PORT || 3002; // Chạy port mặc định của bạn
+
+// Cấu hình Middleware
+app.use(cors());
+app.use(express.json());
+
+// 1) API LẤY GIÁ ETH (DÙNG BINANCE THAY COINGECKO)
 app.get('/api/eth-price', async (req, res) => {
   try {
-    // Gọi API công khai của Binance để lấy giá ETH theo cặp USDT
     const response = await axios.get('https://binance.com', {
       params: { symbol: 'ETHUSDT' }
     });
 
     const priceUsdt = parseFloat(response.data.price);
 
-    // Tạo cấu trúc dữ liệu trả về giống hệt CoinGecko cũ để bạn không phải sửa code phía Client
+    // Giữ nguyên cấu trúc dữ liệu giống CoinGecko cũ để không phải sửa code phía Client Next.js
     const mockCoinGeckoData = {
       ethereum: {
         usd: priceUsdt,
-        vnd: priceUsdt * 25400 // Tạm tính tỉ giá quy đổi USD/VND thực tế
+        vnd: priceUsdt * 25400 // Tỷ giá quy đổi ước tính USD/VND
       }
     };
 
@@ -25,10 +34,9 @@ app.get('/api/eth-price', async (req, res) => {
   }
 });
 
-// 2) API LẤY TỔNG HỢP RATES (SỬA DÙNG BINANCE)
+// 2) API LẤY TỔNG HỢP RATES (DÙNG BINANCE THAY COINGECKO)
 app.get('/api/rates', async (req, res) => {
   try {
-    // Gọi đồng thời giá BTC, ETH và SOL từ Binance
     const [btcRes, ethRes, solRes] = await Promise.all([
       axios.get('https://binance.com?symbol=BTCUSDT'),
       axios.get('https://binance.com?symbol=ETHUSDT'),
@@ -50,4 +58,9 @@ app.get('/api/rates', async (req, res) => {
     console.error('Binance Rates error:', error.message);
     res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp từ Binance' });
   }
+});
+
+// Lắng nghe cổng kết nối
+app.listen(PORT, () => {
+  console.log(`Server của bạn đang chạy mượt mà tại port ${PORT}`);
 });
