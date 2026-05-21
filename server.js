@@ -25,16 +25,19 @@ io.on('connection', (socket) => {
 });
 // 1) ETH PRICE (SỬA: /api/eth-price)
 app.get('/api/eth-price', async (req, res) => {
-  res.json({
-    ethereum: {
-      usd: 3000
-    }
-  });
   try {
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price',
-      { params: { ids: 'ethereum', vs_currencies: 'usd,vnd' } }
-    );
+    const apiKey = process.env.COINGECKO_API_KEY;
+    const response = await axios.get('https://coingecko.com', {
+      params: {
+        ids: 'ethereum',
+        vs_currencies: 'usd,vnd'
+      },
+      headers: {
+        'x-cg-demo-api-key': apiKey,
+        'Accept': 'application/json'
+      }
+    });
+
     res.json(response.data);
   } catch (error) {
     console.error('ETH price error:', error.message);
@@ -45,8 +48,8 @@ app.get('/api/eth-price', async (req, res) => {
 // 2) RATES (SỬA: /api/rates/eth)
 app.get('/api/rates/eth', async (req, res) => {
   try {
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price',
+    const apiKey = process.env.COINGECKO_API_KEY;
+    const response = await axios.get('https://coingecko.com',
       { params: { ids: 'ethereum', vs_currencies: 'usd,vnd' } }
     );
     res.json(response.data);
