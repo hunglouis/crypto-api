@@ -1,76 +1,53 @@
-require('dotenv').config();
-const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
-const http = require('http');
-const { Server } = require('socket.io');
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
-});
-io.on('connection', (socket) => {
-
-  console.log('Client connected');
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-  });
-
-});
-// 1) ETH PRICE (SỬA: /api/eth-price)
+// 1) API LẤY GIÁ ETH (SỬA DÙNG BINANCE)
 app.get('/api/eth-price', async (req, res) => {
   try {
-    const apiKey = process.env.COINGECKO_API_KEY;
-    const response = await axios.get('https://coingecko.com', {
-      params: {
-        ids: 'ethereum',
-        vs_currencies: 'usd,vnd'
-      },
-      headers: {
-        'x-cg-demo-api-key': apiKey,
-        'Accept': 'application/json'
-      }
+    // Gọi API công khai của Binance để lấy giá ETH theo cặp USDT
+    const response = await axios.get('https://binance.com', {
+      params: { symbol: 'ETHUSDT' }
     });
 
-    res.json(response.data);
+    const priceUsdt = parseFloat(response.data.price);
+
+    // Tạo cấu trúc dữ liệu trả về giống hệt CoinGecko cũ để bạn không phải sửa code phía Client
+    const mockCoinGeckoData = {
+      ethereum: {
+        usd: priceUsdt,
+        vnd: priceUsdt * 25400 // Tạm tính tỉ giá quy đổi USD/VND thực tế
+      }
+    };
+
+    res.json(mockCoinGeckoData);
   } catch (error) {
-    console.error('ETH price error:', error.message);
-    res.status(500).json({ error: 'Không lấy được giá ETH' });
+    console.error('Binance ETH price error:', error.message);
+    res.status(500).json({ error: 'Không lấy được giá ETH từ Binance' });
   }
 });
 
-/// Thêm route /api/rates để giao diện gọi không bị lỗi 404
+// 2) API LẤY TỔNG HỢP RATES (SỬA DÙNG BINANCE)
 app.get('/api/rates', async (req, res) => {
   try {
-    const apiKey = process.env.COINGECKO_API_KEY;
-    const response = await axios.get('https://coingecko.com', {
-      params: {
-        ids: 'bitcoin,ethereum,solana', // Lấy nhiều đồng một lúc cho đủ dùng
-        vs_currencies: 'usd,vnd'
-      },
-      headers: {
-        'x-cg-demo-api-key': apiKey,
-        'Accept': 'application/json'
-      }
-    });
+    // Gọi đồng thời giá BTC, ETH và SOL từ Binance
+    const [btcRes, ethRes, solRes] = await Promise.all([
+      axios.get('https://binance.com?symbol=BTCUSDT'),
+      axios.get('https://binance.com?symbol=ETHUSDT'),
+      axios.get('https://binance.com?symbol=SOLUSDT')
+    ]);
 
-    res.json(response.data);
+    const btcPrice = parseFloat(btcRes.data.price);
+    const ethPrice = parseFloat(ethRes.data.price);
+    const solPrice = parseFloat(solRes.data.price);
+
+    const mockCoinGeckoRates = {
+      bitcoin: { usd: btcPrice, vnd: btcPrice * 25400 },
+      ethereum: { usd: ethPrice, vnd: ethPrice * 25400 },
+      solana: { usd: solPrice, vnd: solPrice * 25400 }
+    };
+
+    res.json(mockCoinGeckoRates);
   } catch (error) {
-    console.error('Rates error:', error.message);
-    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp' });
+    console.error('Binance Rates error:', error.message);
+    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp từ Binance' });
   }
-});
-
-
-// Đảm bảo server listen đúng PORT
-const PORT = process.env.PORT || 3002;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
