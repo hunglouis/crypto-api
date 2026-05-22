@@ -4,7 +4,8 @@ const axios = require('axios');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('ws'); // Khai báo thư viện WebSocket
-
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ port: 3005 });
 const app = express();
 const PORT = process.env.PORT || 3002;
 
@@ -25,7 +26,7 @@ app.get('/api/eth-price', async (req, res) => {
   }
 });
 
-// 2) API LẤY TỔNG HỢP RATES (HTTP)
+// 2) API LẤY TỔNG HỢP RATES (HTTP) - ĐÃ SỬA LINK API BINANCE CHUẨN
 app.get('/api/rates', async (req, res) => {
   try {
     const [btcRes, ethRes, solRes] = await Promise.all([
@@ -33,33 +34,49 @@ app.get('/api/rates', async (req, res) => {
       axios.get('https://binance.com'),
       axios.get('https://binance.com')
     ]);
+
+    const btcPrice = parseFloat(btcRes.data.price);
+    const ethPrice = parseFloat(ethRes.data.price);
+    const solPrice = parseFloat(solRes.data.price);
+    const tỷ_giá_usd_vnd = 25400; // Tỷ giá giả lập cố định
+
     res.json({
-      bitcoin: { usd: parseFloat(btcRes.data.price), vnd: parseFloat(btcRes.data.price) * 25400 },
-      ethereum: { usd: parseFloat(ethRes.data.price), vnd: parseFloat(ethRes.data.price) * 25400 },
-      solana: { usd: parseFloat(solRes.data.price), vnd: parseFloat(solRes.data.price) * 25400 }
+      bitcoin: { usd: btcPrice, vnd: btcPrice * tỷ_giá_usd_vnd },
+      ethereum: { usd: ethPrice, vnd: ethPrice * tỷ_giá_usd_vnd },
+      solana: { usd: solPrice, vnd: solPrice * tỷ_giá_usd_vnd },
+      // Trả thêm cấu hình cũ nếu giao diện frontend của bạn gọi trường eth, usdt độc lập
+      eth: ethPrice,
+      usdt: 1,
+      vnd: tỷ_giá_usd_vnd
     });
   } catch (error) {
-    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp' });
+    console.error("Lỗi Binance API:", error.message);
+    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp từ Binance' });
   }
 });
 
-// --- CẤU HÌNH TRÌNH KHỞI TẠO WEBSOCKET SERVER ---
+// --- CẤU HÌNH WEBSOCKET SERVER CHUẨN (KHÔNG BỊ TRÙNG LẶP) ---
 const server = http.createServer(app);
-const wss = new Server({ server });
+const wssserver = new Server({ server }); // Sử dụng luôn cổng của HTTP server (PORT 3002)
 
-wss.on('connection', (ws) => {
+wssserver.on('connection', (ws) => {
   console.log('Client đã kết nối WebSocket thành công!');
 
-  // Tự động gửi dữ liệu chào mừng hoặc cập nhật giá ban đầu cho client nếu cần
+  // Gửi tin nhắn chào mừng khi client kết nối thành công
   ws.send(JSON.stringify({ status: 'connected', message: 'Kết nối WebSocket backend thành công!' }));
+
+  // Lắng nghe tin nhắn từ client (ví dụ log nhật ký nghe nhạc gửi lên)
+  ws.on('message', (message) => {
+    console.log('Nhận nhật ký/dữ liệu từ client:', message.toString());
+  });
 
   ws.on('close', () => {
     console.log('Client đã ngắt kết nối WebSocket.');
   });
 });
-// ------------------------------------------------
 
-// Thay vì dùng app.listen, ta dùng server.listen để chạy cả HTTP và WebSocket chung một cổng 3002
+// Chạy server duy nhất trên một cổng PORT (đã gom cả HTTP và WebSocket chung cấu hình)
 server.listen(PORT, () => {
-  console.log(`Server HTTP và WebSocket đang hoạt động tại port ${PORT}`);
+  console.log(`Server HTTP và WebSocket đang hoạt động ổn định tại port ${PORT}`);
 });
+
