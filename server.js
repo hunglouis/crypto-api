@@ -75,7 +75,12 @@ wssserver.on('connection', (ws) => {
   });
 });
 
+
 // Chạy server duy nhất trên một cổng PORT (đã gom cả HTTP và WebSocket chung cấu hình)
+// Thêm đường dẫn cho trang chủ
+app.get('/', (req, res) => {
+  res.send('<h1>Server Crypto API đang hoạt động ổn định! 🎉</h1>');
+});
 server.listen(PORT, () => {
   console.log(`Server HTTP và WebSocket đang hoạt động ổn định tại port ${PORT}`);
 });
