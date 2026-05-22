@@ -6,10 +6,12 @@ require('dotenv').config(); // Hỗ trợ đọc file cấu hình .env nếu có
 // 1. CẤU HÌNH THÔNG TIN SUPABASE CỦA BẠN
 // (Hãy thay thế bằng URL và KEY chính xác của dự án bạn)
 // ==========================================
-const SUPABASE_URL = "https://hmvvjjiiaelcsfqgxbxv.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtdnZqamlpYWVsY3NmcWd4Ynh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDg4MzcsImV4cCI6MjA4OTkyNDgzN30.zCpflfgSmBwpwe62P7cr1Ppf5dMUMjh782EhZeZ-kuw";
+// Thay vì viết chữ cứng, hãy sửa lại thành gọi process.env như thế này:
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 
 // ==========================================
 // 2. LOGIC LẤY GIÁ VÀ ĐẨY LÊN SUPABASE
@@ -43,6 +45,20 @@ async function updateRatesToSupabase() {
     console.error("❌ Lỗi kết nối hoặc lấy dữ liệu Binance:", error.message);
   }
 }
+
+// Thêm đoạn này vào cuối cùng file server.js để đánh lừa Render quét cổng
+const http = require('http');
+const fakeServer = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Crypto API Worker Is Running...');
+});
+
+// Sử dụng cổng do Render cấp hoặc mặc định là 3002
+const PORT = process.env.PORT || 3002
+fakeServer.listen(PORT, () => {
+  console.log(`Fake web listener active on port ${PORT}`);
+});
+
 
 // ==========================================
 // 3. THIẾT LẬP TRÌNH ĐIỀU KHIỂN CHẠY TỰ ĐỘNG
