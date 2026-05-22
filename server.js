@@ -1,87 +1,56 @@
-require('dotenv').config();
-const express = require('express');
+const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
-const cors = require('cors');
-const http = require('http');
-const { Server } = require('ws'); // Khai báo thư viện WebSocket
-const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 3005 });
-const app = express();
-const PORT = process.env.PORT || 3002;
+require('dotenv').config(); // Hỗ trợ đọc file cấu hình .env nếu có
 
-// Cấu hình Middleware
-app.use(cors());
-app.use(express.json());
+// ==========================================
+// 1. CẤU HÌNH THÔNG TIN SUPABASE CỦA BẠN
+// (Hãy thay thế bằng URL và KEY chính xác của dự án bạn)
+// ==========================================
+const SUPABASE_URL = "https://hmvvjjiiaelcsfqgxbxv.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtdnZqamlpYWVsY3NmcWd4Ynh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDg4MzcsImV4cCI6MjA4OTkyNDgzN30.zCpflfgSmBwpwe62P7cr1Ppf5dMUMjh782EhZeZ-kuw";
 
-// 1) API LẤY GIÁ ETH (HTTP)
-app.get('/api/eth-price', async (req, res) => {
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ==========================================
+// 2. LOGIC LẤY GIÁ VÀ ĐẨY LÊN SUPABASE
+// ==========================================
+async function updateRatesToSupabase() {
   try {
+    // Gọi API lấy giá ETH/USDT trực tiếp từ hệ thống Binance
     const response = await axios.get('https://binance.com');
-    const priceUsdt = parseFloat(response.data.price);
-    res.json({
-      ethereum: { usd: priceUsdt, vnd: priceUsdt * 25400 }
-    });
+
+    if (response.data && response.data.price) {
+      const ethPrice = parseFloat(response.data.price);
+      const tỷ_giá_usd_vnd = 25400; // Giá USD/VND hiện tại
+
+      // Cập nhật đè dữ liệu vào hàng có id = 1 trên Supabase
+      const { error } = await supabase
+        .from('crypto_rates')
+        .update({
+          eth_price: ethPrice,
+          vnd_rate: tỷ_giá_usd_vnd,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', 1);
+
+      if (error) {
+        console.error("❌ Lỗi ghi dữ liệu lên Supabase:", error.message);
+      } else {
+        console.log(`✅ [${new Date().toLocaleTimeString()}] Đã đồng bộ lên Supabase thành công: ETH = $${ethPrice}`);
+      }
+    }
   } catch (error) {
-    res.status(500).json({ error: 'Không lấy được giá ETH từ Binance' });
+    console.error("❌ Lỗi kết nối hoặc lấy dữ liệu Binance:", error.message);
   }
-});
+}
 
-// 2) API LẤY TỔNG HỢP RATES (HTTP) - ĐÃ SỬA LINK API BINANCE CHUẨN
-app.get('/api/rates', async (req, res) => {
-  try {
-    const [btcRes, ethRes, solRes] = await Promise.all([
-      axios.get('https://binance.com'),
-      axios.get('https://binance.com'),
-      axios.get('https://binance.com')
-    ]);
+// ==========================================
+// 3. THIẾT LẬP TRÌNH ĐIỀU KHIỂN CHẠY TỰ ĐỘNG
+// ==========================================
+console.log("🚀 Server đồng bộ tỷ giá ngầm đang khởi động...");
 
-    const btcPrice = parseFloat(btcRes.data.price);
-    const ethPrice = parseFloat(ethRes.data.price);
-    const solPrice = parseFloat(solRes.data.price);
-    const tỷ_giá_usd_vnd = 25400; // Tỷ giá giả lập cố định
+// Chạy kiểm tra tức thì 1 lần đầu tiên ngay khi bật server
+updateRatesToSupabase();
 
-    res.json({
-      bitcoin: { usd: btcPrice, vnd: btcPrice * tỷ_giá_usd_vnd },
-      ethereum: { usd: ethPrice, vnd: ethPrice * tỷ_giá_usd_vnd },
-      solana: { usd: solPrice, vnd: solPrice * tỷ_giá_usd_vnd },
-      // Trả thêm cấu hình cũ nếu giao diện frontend của bạn gọi trường eth, usdt độc lập
-      eth: ethPrice,
-      usdt: 1,
-      vnd: tỷ_giá_usd_vnd
-    });
-  } catch (error) {
-    console.error("Lỗi Binance API:", error.message);
-    res.status(500).json({ error: 'Không lấy được tỷ giá tổng hợp từ Binance' });
-  }
-});
-
-// --- CẤU HÌNH WEBSOCKET SERVER CHUẨN (KHÔNG BỊ TRÙNG LẶP) ---
-const server = http.createServer(app);
-const wssserver = new Server({ server }); // Sử dụng luôn cổng của HTTP server (PORT 3002)
-
-wssserver.on('connection', (ws) => {
-  console.log('Client đã kết nối WebSocket thành công!');
-
-  // Gửi tin nhắn chào mừng khi client kết nối thành công
-  ws.send(JSON.stringify({ status: 'connected', message: 'Kết nối WebSocket backend thành công!' }));
-
-  // Lắng nghe tin nhắn từ client (ví dụ log nhật ký nghe nhạc gửi lên)
-  ws.on('message', (message) => {
-    console.log('Nhận nhật ký/dữ liệu từ client:', message.toString());
-  });
-
-  ws.on('close', () => {
-    console.log('Client đã ngắt kết nối WebSocket.');
-  });
-});
-
-
-// Chạy server duy nhất trên một cổng PORT (đã gom cả HTTP và WebSocket chung cấu hình)
-// Thêm đường dẫn cho trang chủ
-app.get('/', (req, res) => {
-  res.send('<h1>Server Crypto API đang hoạt động ổn định! 🎉</h1>');
-});
-server.listen(PORT, () => {
-  console.log(`Server HTTP và WebSocket đang hoạt động ổn định tại port ${PORT}`);
-});
-
+// Thiết lập lịch cứ đúng 30 giây (30000ms) tự động lặp lại quy trình ngầm
+setInterval(updateRatesToSupabase, 30000);
