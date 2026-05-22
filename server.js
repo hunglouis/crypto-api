@@ -19,7 +19,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 async function updateRatesToSupabase() {
   try {
     // Gọi API lấy giá ETH/USDT trực tiếp từ hệ thống Binance
-    const response = await axios.get('https://binance.com');
+    const response = await axios.get('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT');
 
     if (response.data && response.data.price) {
       const ethPrice = parseFloat(response.data.price);
