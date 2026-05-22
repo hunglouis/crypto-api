@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
-require('dotenv').config(); // Hỗ trợ đọc file cấu hình .env nếu có
+require('dotenv').config();
 
 // ==========================================
 // 1. CẤU HÌNH THÔNG TIN SUPABASE CỦA BẠN
