@@ -20,6 +20,13 @@ app.get('/api/eth-price', (req, res) => {
 app.get('/api/rates', (req, res) => {
   res.json({ message: "Rates data" });
 });
+
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*"); // Hoặc 'http://localhost:3001'
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  next(); // THIẾU DÒNG NÀY LÀ API SẼ BỊ TREO HOẶC LỖI CORS
+});
+
 // HOẶC chỉ cấu hình riêng cho frontend của bạn:
 // app.use(cors({ origin: 'http://localhost:3001' }));
 
