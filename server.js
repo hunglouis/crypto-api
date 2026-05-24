@@ -10,7 +10,16 @@ app.use(cors());
 app.use(express.json());
 
 // 2. Các tuyến đường API phải đặt ở PHÍA DƯỚI cors()
-app.use('/api/eth-price', ethRouter);
+// Sửa lại đoạn định nghĩa API endpoint của bạn (Ví dụ):
+app.get('/api/eth-price', (req, res) => {
+  // Code xử lý lấy giá ETH của bạn ở đây...
+  res.json({ price: 3000 });
+});
+
+// Hoặc nếu bạn dùng đường dẫn cũ từ ảnh trước:
+app.get('/api/rates', (req, res) => {
+  res.json({ message: "Rates data" });
+});
 // HOẶC chỉ cấu hình riêng cho frontend của bạn:
 // app.use(cors({ origin: 'http://localhost:3001' }));
 
