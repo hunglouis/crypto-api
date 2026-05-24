@@ -1,6 +1,19 @@
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 require('dotenv').config();
+const cors = require('cors');
+const express = require('express');
+const app = express();
+
+// Cho phép tất cả các nguồn truy cập (Dùng khi dev)
+app.use(cors());
+app.use(express.json());
+
+// 2. Các tuyến đường API phải đặt ở PHÍA DƯỚI cors()
+app.use('/api/eth-price', ethRouter);
+// HOẶC chỉ cấu hình riêng cho frontend của bạn:
+// app.use(cors({ origin: 'http://localhost:3001' }));
+
 
 // ==========================================
 // 1. CẤU HÌNH THÔNG TIN SUPABASE CỦA BẠN
