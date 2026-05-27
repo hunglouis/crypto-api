@@ -1,60 +1,66 @@
+require('dotenv').config(); // Đảm bảo dòng này luôn nằm trên cùng
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
-require('dotenv').config();
 const cors = require('cors');
 const express = require('express');
-const app = express();
+const http = require('http');
 
-// Cho phép tất cả các nguồn truy cập (Dùng khi dev)
-app.use(cors());
+const app = express();
+const uploadRoute = require('./routes/upload');
+const streamRoute = require('./routes/stream');
+
+// ==========================================
+// 1. CẤU HÌNH MỞ KHÓA CORS CHUẨN
+// ==========================================
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'], // Đã bao gồm tất cả các cổng frontend của bạn
+  methods: ['GET', 'POST', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'x-user-wallet', 'Authorization'],
+  credentials: true
+}));
+
 app.use(express.json());
 
-// 2. Các tuyến đường API phải đặt ở PHÍA DƯỚI cors()
-// Sửa lại đoạn định nghĩa API endpoint của bạn (Ví dụ):
+// ==========================================
+// 2. CẤU HÌNH CÁC ĐƯỜNG DẪN API (ROUTES)
+// ==========================================
+app.use('/api/upload', uploadRoute);
+app.use('/api/stream', streamRoute);
+
+// Endpoint kiểm tra trạng thái hoạt động
+app.get('/', (req, res) => {
+  res.send('Crypto & Music API Worker Is Running...');
+});
+
 app.get('/api/eth-price', (req, res) => {
-  // Code xử lý lấy giá ETH của bạn ở đây...
-  res.json({ price: 3000 });
+  res.json({ price: 3002 });
 });
 
-// Hoặc nếu bạn dùng đường dẫn cũ từ ảnh trước:
-app.get('/api/rates', (req, res) => {
-  res.json({ message: "Rates data" });
-});
+// KÍCH HOẠT API MINT TỰ ĐỘNG
+const { router: mintRouter, initSupabaseMintRoute } = require('./routes/mintRoutes');
 
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*"); // Hoặc 'http://localhost:3001'
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-  next(); // THIẾU DÒNG NÀY LÀ API SẼ BỊ TREO HOẶC LỖI CORS
-});
-
-// HOẶC chỉ cấu hình riêng cho frontend của bạn:
-// app.use(cors({ origin: 'http://localhost:3001' }));
-
-
-// ==========================================
-// 1. CẤU HÌNH THÔNG TIN SUPABASE CỦA BẠN
-// (Hãy thay thế bằng URL và KEY chính xác của dự án bạn)
-// ==========================================
-// Thay vì viết chữ cứng, hãy sửa lại thành gọi process.env như thế này:
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Truyền chìa khóa sang khởi tạo cho Route
+initSupabaseMintRoute(SUPABASE_URL, SUPABASE_ANON_KEY);
+app.use('/api', mintRouter);
+
+// Khởi tạo Supabase cho server.js dùng
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-
 // ==========================================
-// 2. LOGIC LẤY GIÁ VÀ ĐẨY LÊN SUPABASE
+// 3. LOGIC LẤY GIÁ VÀ ĐẨY LÊN SUPABASE (30 GIÂY/LẦN)
 // ==========================================
 async function updateRatesToSupabase() {
   try {
-    // Gọi API lấy giá ETH/USDT trực tiếp từ hệ thống Binance
-    const response = await axios.get('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT');
+    const response = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT`);
 
     if (response.data && response.data.price) {
       const ethPrice = parseFloat(response.data.price);
-      const tỷ_giá_usd_vnd = 25400; // Giá USD/VND hiện tại
+      const tỷ_giá_usd_vnd = 25400;
 
-      // Cập nhật đè dữ liệu vào hàng có id = 1 trên Supabase
       const { error } = await supabase
         .from('crypto_rates')
         .update({
@@ -67,7 +73,7 @@ async function updateRatesToSupabase() {
       if (error) {
         console.error("❌ Lỗi ghi dữ liệu lên Supabase:", error.message);
       } else {
-        console.log(`✅ [${new Date().toLocaleTimeString()}] Đã đồng bộ lên Supabase thành công: ETH = $${ethPrice}`);
+        console.log(`✅ [${new Date().toLocaleTimeString()}] Đã đồng bộ lên Supabase: ETH = $${ethPrice}`);
       }
     }
   } catch (error) {
@@ -75,27 +81,118 @@ async function updateRatesToSupabase() {
   }
 }
 
-// Thêm đoạn này vào cuối cùng file server.js để đánh lừa Render quét cổng
-const http = require('http');
-const fakeServer = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Crypto API Worker Is Running...');
-});
-
-// Sử dụng cổng do Render cấp hoặc mặc định là 3002
-const PORT = process.env.PORT || 3002
-fakeServer.listen(PORT, () => {
-  console.log(`Fake web listener active on port ${PORT}`);
-});
-
-
-// ==========================================
-// 3. THIẾT LẬP TRÌNH ĐIỀU KHIỂN CHẠY TỰ ĐỘNG
-// ==========================================
+// Khởi chạy vòng lặp cập nhật tỷ giá ngầm
 console.log("🚀 Server đồng bộ tỷ giá ngầm đang khởi động...");
-
-// Chạy kiểm tra tức thì 1 lần đầu tiên ngay khi bật server
 updateRatesToSupabase();
-
-// Thiết lập lịch cứ đúng 30 giây (30000ms) tự động lặp lại quy trình ngầm
 setInterval(updateRatesToSupabase, 30000);
+
+// ==========================================
+// 4. LOGIC XỬ LÝ AUDIO PREVIEW CHẠY NGẦM VÀ API
+// ==========================================
+const EDGE_FUNCTION_NAME = "audio-preview";
+const CONCURRENCY = 5;
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let idx = 0;
+
+  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const currentIndex = idx++;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
+async function getItemsToProcess() {
+  const url =
+    `${SUPABASE_URL}/rest/v1/items` +
+    `?select=id,fullAudioURL,previewURL` +
+    `&fullAudioURL=not.is.null&previewURL=is.null`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      apikey: SUPABASE_ANON_KEY ?? "",
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) throw new Error(`Fetch items failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function updatePreviewURL(id, previewURL) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_ANON_KEY ?? "",
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({ previewURL }),
+  });
+
+  if (!res.ok) throw new Error(`Update previewURL failed: ${res.status} ${await res.text()}`);
+}
+
+app.post("/api/process-audios", async (_req, res) => { // Đã chuyển thành /api/process-audios cho đồng bộ quy chuẩn
+  try {
+    const items = await getItemsToProcess();
+    if (!items.length) return res.json({ ok: true, count: 0 });
+
+    const results = await mapWithConcurrency(items, CONCURRENCY, async (row) => {
+      const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/${EDGE_FUNCTION_NAME}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({ fullAudioURL: row.fullAudioURL }),
+      });
+
+      const text = await fnRes.text();
+      if (!fnRes.ok) return { id: row.id, ok: false, status: fnRes.status, error: text };
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        return { id: row.id, ok: false, error: `Non-JSON response: ${text}` };
+      }
+
+      const previewURL = data?.previewURL;
+      if (!previewURL) return { id: row.id, ok: false, error: `Missing previewURL in response` };
+
+      await updatePreviewURL(row.id, previewURL);
+      return { id: row.id, ok: true, previewURL };
+    });
+
+    const summary = results.reduce(
+      (acc, r) => {
+        acc[r.ok ? "success" : "fail"]++;
+        return acc;
+      },
+      { success: 0, fail: 0 }
+    );
+
+    return res.json({ ok: true, total: items.length, concurrency: CONCURRENCY, summary, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ==========================================
+// 5. KHỞI CHẠY SERVER DUY NHẤT
+// ==========================================
+const server = http.createServer(app);
+const PORT = process.env.PORT || 3002;
+server.listen(PORT, () => {
+  console.log(`✅ Server backend active on port ${PORT}`);
+});
