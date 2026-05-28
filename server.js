@@ -87,10 +87,54 @@ updateRatesToSupabase();
 setInterval(updateRatesToSupabase, 30000);
 
 // ==========================================
+// TỰ ĐỘNG QUÉT VÀ TẠO PREVIEW AUDIO SAU MỖI 30 GIÂY
+// ==========================================
+async function autoProcessMissingPreviews() {
+  try {
+    console.log("🔍 [Chạy ngầm] Đang quét các bài hát chưa có file preview trên Supabase...");
+    
+    // Gọi trực tiếp đến hàm logic xử lý hàng loạt của bạn
+    const items = await getItemsToProcess();
+    
+    if (items && items.length > 0) {
+      console.log(`🎵 Phát hiện ${items.length} bài hát mới cần tạo file preview. Đang xử lý...`);
+      
+      // Kích hoạt luồng xử lý đồng thời (Concurrency) đã viết sẵn ở dưới của bạn
+      await mapWithConcurrency(items, CONCURRENCY, async (row) => {
+        const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/${EDGE_FUNCTION_NAME}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({ fullAudioURL: row.fullAudioURL }),
+        });
+
+        const text = await fnRes.text();
+        if (!fnRes.ok) return { id: row.id, ok: false };
+
+        let data = JSON.parse(text);
+        const previewURL = data?.previewURL;
+        
+        if (previewURL) {
+          await updatePreviewURL(row.id, previewURL);
+          console.log(`✅ Đã tạo xong preview cho Item ID: ${row.id}`);
+        }
+      });
+    }
+  } catch (error) {
+    console.error("❌ Lỗi trong quá trình tự động quét tạo preview:", error.message);
+  }
+}
+
+// Kích hoạt vòng lặp quét tự động ngầm (Chạy sau mỗi 30 giây)
+setInterval(autoProcessMissingPreviews, 30000);
+
+// ==========================================
 // 4. LOGIC XỬ LÝ AUDIO PREVIEW CHẠY NGẦM VÀ API
 // ==========================================
 const EDGE_FUNCTION_NAME = "audio-preview";
-const CONCURRENCY = 5;
+const CONCURRENCY = 10;
 
 async function mapWithConcurrency(items, limit, worker) {
   const results = new Array(items.length);
