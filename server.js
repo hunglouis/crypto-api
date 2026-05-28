@@ -78,7 +78,7 @@ async function updateRatesToSupabase() {
 setInterval(updateRatesToSupabase, 30000);
 
 // ==========================================
-// 4. LUỒNG TỰ ĐỘNG XỬ LÝ MP3 & MP4 TRÊN RENDER
+// 4. LUỒNG TỰ ĐỘNG XỬ LÝ NHẠC VÀ ĐIỀU HƯỚNG FILE RÁC (PDF, PNG...)
 // ==========================================
 
 async function getItemsToProcess() {
@@ -123,7 +123,7 @@ async function autoProcessMissingPreviews() {
     const items = await getItemsToProcess();
     
     if (items && items.length > 0) {
-      console.log(`🎵 [Render] Phát hiện ${items.length} bài cần tạo preview. Đang tiến hành phân loại...`);
+      console.log(`🎵 [Render] Phát hiện ${items.length} bài cần tạo preview. Đang tiến hành phân loại file...`);
       
       const tmpDir = path.join(__dirname, 'tmp_processing');
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
@@ -136,23 +136,33 @@ async function autoProcessMissingPreviews() {
             url: row.fullAudioURL, 
             method: 'GET', 
             responseType: 'stream',
-            timeout: 20000 // Tăng timeout lên 20s cho file MP4 nặng
+            timeout: 20000 
           });
 
-          const contentType = response.headers['content-type'] || '';
-          console.log(`ℹ️ Loại file nhận diện: ${contentType} tại ID [${row.id}]`);
+          const contentType = (response.headers['content-type'] || '').toLowerCase();
+          console.log(`ℹ️ Định dạng file nhận diện: ${contentType} tại ID [${row.id}]`);
 
-          // 1. NẾU LÀ FILE ẢNH -> TỰ ĐỘNG SỬA SAI LƯU VÀO THUMBURL
-          if (contentType.includes('image')) {
-            console.log(`💡 [Tự Sửa Lỗi] Phát hiện file ẢNH tại ô Nhạc của ID [${row.id}]. Đang chuyển về thumbURL...`);
-            await updateItemData(row.id, 'Error: Source file was an image, moved to thumbnail', row.fullAudioURL);
+          // ==========================================
+          // BỘ LỌC TỰ ĐỘNG SỬA SAI: CHỈ CHẤP NHẬN AUDIO HOẶC VIDEO MP4
+          // ==========================================
+          const isAudio = contentType.includes('audio');
+          const isVideo = contentType.includes('video/mp4') || row.fullAudioURL.endsWith('.mp4');
+
+          // Nếu file tải về KHÔNG PHẢI nhạc hoặc video (Nó là PNG, JPG, PDF, TXT, DOCX...)
+          if (!isAudio && !isVideo) {
+            console.log(`💡 [Tự Sửa Sai] Phát hiện file ĐIỀN NHẦM (${contentType}) tại ô Nhạc của ID [${row.id}].`);
+            console.log(`➡️ Đang tự động gom file này sang làm ảnh bìa (thumbURL)...`);
+            
+            await updateItemData(
+              row.id, 
+              'Error: Misplaced file (Not audio/video), moved to thumbnail', 
+              row.fullAudioURL // Đẩy link PDF, PNG... này sang làm thumbnail!
+            );
             continue; 
           }
 
-          // Xác định đuôi file tạm dựa trên định dạng thực tế tải về
-          const isVideoMp4 = contentType.includes('video/mp4') || row.fullAudioURL.endsWith('.mp4');
-          const ext = isVideoMp4 ? '.mp4' : '.mp3';
-          
+          // Xác định đuôi file tạm dựa trên định dạng thực tế
+          const ext = isVideo ? '.mp4' : '.mp3';
           const inputPath = path.join(tmpDir, `input_${row.id}${ext}`);
           const outputPath = path.join(tmpDir, `preview_${row.id}.mp3`);
 
@@ -164,16 +174,15 @@ async function autoProcessMissingPreviews() {
             writer.on('error', reject);
           });
 
-          // 2. TIẾN HÀNH CẮT NHẠC
-          console.log(`✂️ Đang tiến hành trích xuất cắt 45s từ file ${ext.toUpperCase()} cho ID [${row.id}]...`);
+          // TIẾN HÀNH CẮT NHẠC
+          console.log(`✂️ Đang trích xuất cắt 45s từ file nhạc gốc cho ID [${row.id}]...`);
           
           try {
             MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
           } catch (cutError) {
-            // Trường hợp file MP4 có cấu trúc mã hóa video quá đặc biệt khiến thư viện JS không cắt trực tiếp được
-            if (isVideoMp4) {
-              console.warn(`⚠️ File MP4 của ID [${row.id}] chứa cấu trúc phức tạp. Hệ thống sẽ dùng giải pháp dự phòng gán file gốc để tránh treo!`);
-              await updateItemData(row.id, row.fullAudioURL); // Gán tạm bản full làm preview nếu không thể cắt bằng JS thuần
+            if (isVideo) {
+              console.warn(`⚠️ Bản MP4 của ID [${row.id}] quá phức tạp. Gán tạm bản full làm preview để tránh treo!`);
+              await updateItemData(row.id, row.fullAudioURL);
               if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
               continue;
             } else {
@@ -181,11 +190,11 @@ async function autoProcessMissingPreviews() {
             }
           }
 
-          // 3. UPLOAD BẢN PREVIEW LÊN PINATA
+          // UPLOAD BẢN PREVIEW LÊN PINATA
           console.log(`📤 Đang đẩy bản preview lên Pinata cho ID [${row.id}]...`);
           const newPreviewURL = await uploadToPinata(outputPath);
 
-          // 4. CẬP NHẬT DATABASE
+          // CẬP NHẬT DATABASE
           await updateItemData(row.id, newPreviewURL);
           console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
 
