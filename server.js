@@ -87,136 +87,102 @@ updateRatesToSupabase();
 setInterval(updateRatesToSupabase, 30000);
 
 // ==========================================
-// ĐOẠN CODE GẮN LOG THEO DÕI TIẾN ĐỘ THỰC TẾ
+// 4. LUỒNG TỰ ĐỘNG CẮT NHẠC VÀ CẬP NHẬT PREVIEW TRÊN RENDER
 // ==========================================
-async function autoProcessMissingPreviews() {
+const MP3Cutter = require('mp3-cutter');
+const fs = require('fs');
+const path = require('path');
+
+// Hàm lấy danh sách bài hát chưa có preview từ Supabase
+async function getItemsToProcess() {
   try {
-    const items = await getItemsToProcess();
-    
-    if (items && items.length > 0) {
-      console.log(`🎵 [Bắt đầu] Phát hiện ${items.length} bài cần xử lý. Đang gửi sang Supabase...`);
-      
-      await mapWithConcurrency(items, CONCURRENCY, async (row) => {
-        console.log(`⏳ Đang gửi Item ID [${row.id}] sang Edge Function... URL Gốc: ${row.fullAudioURL}`);
-        
-        const fnRes = await fetch(`${SUPABASE_URL}/functions/v1/${EDGE_FUNCTION_NAME}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-          body: JSON.stringify({ ipfsUrl: row.fullAudioURL }),
-        });
-
-        const text = await fnRes.text();
-        
-        // NẾU SUPABASE TRẢ VỀ LỖI - SẼ IN RA NGAY TẠI ĐÂY
-        if (!fnRes.ok) {
-          console.error(`❌ Item ID [${row.id}] Thất bại tại Supabase. Mã lỗi: ${fnRes.status}, Chi tiết: ${text}`);
-          return { id: row.id, ok: false };
-        }
-
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          console.error(`❌ Item ID [${row.id}] Lỗi không phải cấu trúc JSON. Dữ liệu nhận được: ${text}`);
-          return { id: row.id, ok: false };
-        }
-
-        const previewURL = data?.previewURL;
-        
-        if (!previewURL) {
-          console.error(`❌ Item ID [${row.id}] Thành công nhưng bị SAI KEY dữ liệu. Cấu trúc nhận được là:`, data);
-          return { id: row.id, ok: false };
-        }
-
-        // TIẾN HÀNH GHI VÀO DATABASE
-        console.log(`💾 Đang ghi đè đường link preview mới vào Database cho ID [${row.id}]...`);
-        await updatePreviewURL(row.id, previewURL);
-        console.log(`🎉 THÀNH CÔNG HOÀN TOÀN: Đã có preview cho ID [${row.id}]`);
-        
-      });
-    }
-  } catch (error) {
-    console.error("❌ Lỗi hệ thống chạy ngầm:", error.message);
+    const url = `${process.env.SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL&fullAudioURL=not.is.null&previewURL=is.null`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: process.env.SUPABASE_ANON_KEY ?? "",
+        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch (err) {
+    console.error("❌ Lỗi khi lấy danh sách từ Supabase:", err.message);
+    return [];
   }
 }
 
+// Hàm cập nhật link preview mới vào Supabase
+async function updatePreviewURL(id, previewURL) {
+  try {
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        apikey: process.env.SUPABASE_ANON_KEY ?? "",
+        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ previewURL }),
+    });
+  } catch (err) {
+    console.error(`❌ Lỗi khi cập nhật DB cho ID ${id}:`, err.message);
+  }
+}
 
-// Kích hoạt vòng lặp quét tự động ngầm (Chạy sau mỗi 30 giây)
-setInterval(autoProcessMissingPreviews, 30000);
-
-// ==========================================
-
-const MP3Cutter=require('mp3-cutter');
-const fs = require('fs');
-const path = require('path');
-const uploadToPinata = require('./utils/uploadToPinata'); // Sử dụng lại file upload Pinata sẵn có của bạn
-
+// Vòng lặp chạy ngầm tuần tự tự động tải và cắt nhạc
 async function autoProcessMissingPreviews() {
   try {
     const items = await getItemsToProcess();
     
     if (items && items.length > 0) {
-      console.log(`🎵 [Render] Phát hiện ${items.length} bài cần tạo preview. Đang tự xử lý...`);
+      console.log(`🎵 [Render] Phát hiện ${items.length} bài cần tạo preview. Đang tiến hành xử lý...`);
       
-      // Tạo thư mục lưu file tạm trên Render nếu chưa có
       const tmpDir = path.join(__dirname, 'tmp_processing');
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
       for (const row of items) {
         try {
-          console.log(`⏳ Đang tải file gốc về Render xử lý cho ID: ${row.id}...`);
+          console.log(`⏳ Đang xử lý tải file và cắt nhạc cho bài viết ID [${row.id}]...`);
           
           const inputPath = path.join(tmpDir, `input_${row.id}.mp3`);
           const outputPath = path.join(tmpDir, `preview_${row.id}.mp3`);
 
-          // 1. Tải file nhạc gốc từ IPFS về ổ đĩa tạm của Render
-          const response = await axios({
-            url: row.fullAudioURL,
-            method: 'GET',
-            responseType: 'stream'
-          });
-          
+          // Tải file gốc từ IPFS về Render
+          const response = await axios({ url: row.fullAudioURL, method: 'GET', responseType: 'stream' });
           const writer = fs.createWriteStream(inputPath);
           response.data.pipe(writer);
-          
           await new Promise((resolve, reject) => {
             writer.on('finish', resolve);
             writer.on('error', reject);
           });
 
-          // 2. Cắt nhạc bằng thư viện thuần JS cực kỳ nhanh (Ví dụ lấy từ giây thứ 0 đến giây thứ 45)
-          console.log(`✂️ Đang cắt nhạc tự động bài số [${row.id}]...`);
-          MP3Cutter.cut({
-            src: inputPath,
-            target: outputPath,
-            start: 0,
-            end: 45
-          });
+          // Cắt nhạc bằng thư viện thuần JS lấy từ giây 0 đến giây 45 cực nhanh
+          MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
 
-          // 3. Đẩy file nhạc đã cắt lên Pinata lấy link preview mới
-          console.log(`📤 Đang đẩy file preview đã cắt lên Pinata IPFS...`);
+          // Upload bản cắt preview lên Pinata IPFS
           const newPreviewURL = await uploadToPinata(outputPath);
 
-          // 4. Cập nhật thẳng vào Database Supabase từ Render
+          // Cập nhật ngược lại vào Database Supabase
           await updatePreviewURL(row.id, newPreviewURL);
-          console.log(`🎉 HOÀN THÀNH DỨT ĐIỂM: Đã cập nhật preview cho ID [${row.id}] -> ${newPreviewURL}`);
+          console.log(`🎉 THÀNH CÔNG: Đã tạo preview cho bài viết ID [${row.id}] -> ${newPreviewURL}`);
 
-          // Xóa file tạm để dọn sạch ổ đĩa
+          // Dọn dẹp dứt điểm file tạm trên ổ đĩa
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
           if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
         } catch (itemError) {
-          console.error(`❌ Lỗi xử lý bài hát ID [${row.id}]:`, itemError.message);
+          console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
         }
       }
     }
   } catch (error) {
-    console.error("❌ Lỗi luồng chạy ngầm trên Render:", error.message);
+    console.error("❌ Lỗi luồng chạy ngầm:", error.message);
   }
-};
+}
+
+// Kích hoạt vòng lặp quét tự động chạy ngầm (30 giây chạy kiểm tra một lần)
+setInterval(autoProcessMissingPreviews, 30000);
 
 // ==========================================
 // 5. KHỞI CHẠY SERVER DUY NHẤT
