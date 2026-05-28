@@ -96,7 +96,7 @@ setInterval(updateRatesToSupabase, 30000);
 // Hàm lấy danh sách bài hát chưa có preview từ Supabase
 async function getItemsToProcess() {
   try {
-    const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL&fullAudioURL=not.is.null&previewURL=is.null`;
+    const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL,thumbURL&fullAudioURL=not.is.null&previewURL=is.null`;
     const res = await fetch(url, {
       method: "GET",
       headers: {
@@ -113,9 +113,14 @@ async function getItemsToProcess() {
   }
 }
 
-// Hàm cập nhật link preview mới vào Supabase
-async function updatePreviewURL(id, previewURL) {
+// Hàm cập nhật cả link preview và link ảnh bìa sửa lỗi vào Supabase
+async function updateItemData(id, previewURL, thumbURL = null) {
   try {
+    const updateData = { previewURL };
+    if (thumbURL) {
+      updateData.thumbURL = thumbURL; // Tự động điền lại ảnh bìa nếu phát hiện nhầm lẫn dữ liệu
+    }
+
     await fetch(`${SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
       method: "PATCH",
       headers: {
@@ -123,10 +128,10 @@ async function updatePreviewURL(id, previewURL) {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ previewURL }),
+      body: JSON.stringify(updateData),
     });
   } catch (err) {
-    console.error(`❌ Lỗi khi cập nhật DB cho ID ${id}:`, err.message);
+    console.error(`❌ Lỗi khi cập nhật dữ liệu DB cho ID ${id}:`, err.message);
   }
 }
 
@@ -148,7 +153,6 @@ async function autoProcessMissingPreviews() {
 
           console.log(`⏳ Đang kết nối tải file gốc cho ID [${row.id}]...`);
           
-          // Tải file gốc từ IPFS về Render
           const response = await axios({ 
             url: row.fullAudioURL, 
             method: 'GET', 
@@ -156,13 +160,19 @@ async function autoProcessMissingPreviews() {
             timeout: 15000 
           });
 
-          // KIỂM TRA ĐỊNH DẠNG FILE TỪ SERVER XEM CÓ PHẢI LÀ ẢNH KHÔNG
+          // LUỒNG KIỂM TRA THÔNG MINH: NẾU PHÁT HIỆN LINK NHẠC CHỨA FILE ẢNH
           const contentType = response.headers['content-type'];
           if (contentType && contentType.includes('image')) {
-            console.error(`❌ BỎ QUA ID [${row.id}]: Phát hiện link chứa FILE ẢNH chứ không phải NHẠC!`);
-            // Điền chữ lỗi vào database để lần sau vòng lặp bỏ qua không quét lại bản ghi này nữa
-            await updatePreviewURL(row.id, 'Error: Source file is an image');
-            continue; // Nhảy sang bài tiếp theo luôn
+            console.log(`💡 [Tự Sửa Lỗi] Phát hiện ID [${row.id}] bị điền nhầm FILE ẢNH vào ô Nhạc!`);
+            console.log(`➡️ Tiến hành ném link này vào cột thumbURL: ${row.fullAudioURL}`);
+            
+            // Cập nhật: Ném link ảnh vào thumbURL, đồng thời điền chữ báo lỗi vào ô nhạc nghe thử để chặn quét lại
+            await updateItemData(
+              row.id, 
+              'Error: Source file was an image, moved to thumbnail', 
+              row.fullAudioURL // Lưu link ảnh này vào cột thumbURL chuẩn xác!
+            );
+            continue; 
           }
 
           // Ghi file nhạc hợp lệ xuống ổ đĩa tạm
@@ -182,7 +192,7 @@ async function autoProcessMissingPreviews() {
           const newPreviewURL = await uploadToPinata(outputPath);
 
           // Cập nhật ngược lại vào Database Supabase
-          await updatePreviewURL(row.id, newPreviewURL);
+          await updateItemData(row.id, newPreviewURL);
           console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
 
           // Dọn dẹp dứt điểm file tạm trên ổ đĩa để giải phóng bộ nhớ
@@ -191,9 +201,8 @@ async function autoProcessMissingPreviews() {
 
         } catch (itemError) {
           console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
-          // Nếu lỗi mạng hoặc link chết hẳn, đánh dấu để không quét lại gây treo vòng lặp
           if (itemError.message.includes('404') || itemError.message.includes('timeout')) {
-            await updatePreviewURL(row.id, 'Error: Broken link');
+            await updateItemData(row.id, 'Error: Broken link');
           }
         }
       }
