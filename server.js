@@ -148,62 +148,8 @@ async function autoProcessMissingPreviews() {
 setInterval(autoProcessMissingPreviews, 30000);
 
 // ==========================================
-// 4. LOGIC XỬ LÝ AUDIO PREVIEW CHẠY NGẦM VÀ API
-// ==========================================
-const EDGE_FUNCTION_NAME = "audio-preview";
-const CONCURRENCY = 10;
 
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let idx = 0;
-
-  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (true) {
-      const currentIndex = idx++;
-      if (currentIndex >= items.length) return;
-      results[currentIndex] = await worker(items[currentIndex], currentIndex);
-    }
-  });
-
-  await Promise.all(runners);
-  return results;
-}
-
-async function getItemsToProcess() {
-  const url =
-    `${SUPABASE_URL}/rest/v1/items` +
-    `?select=id,fullAudioURL,previewURL` +
-    `&fullAudioURL=not.is.null&previewURL=is.null`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      apikey: SUPABASE_ANON_KEY ?? "",
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!res.ok) throw new Error(`Fetch items failed: ${res.status} ${await res.text()}`);
-  return res.json();
-}
-
-async function updatePreviewURL(id, previewURL) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
-    method: "PATCH",
-    headers: {
-      apikey: SUPABASE_ANON_KEY ?? "",
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify({ previewURL }),
-  });
-
-  if (!res.ok) throw new Error(`Update previewURL failed: ${res.status} ${await res.text()}`);
-}
-
-const { MP3Cutter } = require('mp3-cutter');
+const MP3Cutter=require('mp3-cutter');
 const fs = require('fs');
 const path = require('path');
 const uploadToPinata = require('./utils/uploadToPinata'); // Sử dụng lại file upload Pinata sẵn có của bạn
