@@ -1,9 +1,13 @@
 require('dotenv').config(); // Đảm bảo dòng này luôn nằm trên cùng
-const { createClient } = require('@supabase/supabase-js');
-const axios = require('axios');
 const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 const http = require('http');
+const uploadToPinata = require('./utils/uploadToPinata'); // Nhớ đảm bảo đường dẫn trỏ đúng vào file uploadToPinata của bạn
+const axios = require('axios'); // Thư viện dùng để tải file nhạc từ IPFS về Render
+const fs = require('fs');
+const path = require('path');
+
 
 const app = express();
 const uploadRoute = require('./routes/upload');
