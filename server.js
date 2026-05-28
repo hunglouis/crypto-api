@@ -3,10 +3,11 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 const http = require('http');
-const uploadToPinata = require('./utils/uploadToPinata'); // Nhớ đảm bảo đường dẫn trỏ đúng vào file uploadToPinata của bạn
 const axios = require('axios'); // Thư viện dùng để tải file nhạc từ IPFS về Render
 const fs = require('fs');
 const path = require('path');
+const uploadToPinataModule = require('./utils/uploadToPinata');
+const uploadToPinata = typeof uploadToPinataModule === 'function' ? uploadToPinataModule : uploadToPinataModule.uploadToPinata;
 
 
 const app = express();
