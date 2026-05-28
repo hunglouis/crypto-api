@@ -94,8 +94,7 @@ setInterval(updateRatesToSupabase, 30000);
 // 4. LUỒNG TỰ ĐỘNG CẮT NHẠC VÀ CẬP NHẬT PREVIEW TRÊN RENDER
 // ==========================================
 const MP3Cutter = require('mp3-cutter');
-const fs = require('fs');
-const path = require('path');
+
 
 // Hàm lấy danh sách bài hát chưa có preview từ Supabase
 async function getItemsToProcess() {
