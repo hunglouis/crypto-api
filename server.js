@@ -1,24 +1,26 @@
 require('dotenv').config(); // Đảm bảo dòng này luôn nằm trên cùng
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const axios = require('axios');
+const cors = require('cors');
 const express = require('express');
 const http = require('http');
-const axios = require('axios'); // Thư viện dùng để tải file nhạc từ IPFS về Render
 const fs = require('fs');
 const path = require('path');
-const uploadToPinataModule = require('./utils/uploadToPinata');
-const uploadToPinata = typeof uploadToPinataModule === 'function' ? uploadToPinataModule : uploadToPinataModule.uploadToPinata;
-
+const MP3Cutter = require('mp3-cutter');
 
 const app = express();
 const uploadRoute = require('./routes/upload');
 const streamRoute = require('./routes/stream');
 
+// Nhập hàm uploadToPinata an toàn (tự động nhận diện cấu trúc export)
+const uploadToPinataModule = require('./utils/uploadToPinata');
+const uploadToPinata = typeof uploadToPinataModule === 'function' ? uploadToPinataModule : uploadToPinataModule.uploadToPinata;
+
 // ==========================================
 // 1. CẤU HÌNH MỞ KHÓA CORS CHUẨN
 // ==========================================
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'], // Đã bao gồm tất cả các cổng frontend của bạn
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
   methods: ['GET', 'POST', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'x-user-wallet', 'Authorization'],
   credentials: true
@@ -32,7 +34,6 @@ app.use(express.json());
 app.use('/api/upload', uploadRoute);
 app.use('/api/stream', streamRoute);
 
-// Endpoint kiểm tra trạng thái hoạt động
 app.get('/', (req, res) => {
   res.send('Crypto & Music API Worker Is Running...');
 });
@@ -46,9 +47,7 @@ const { router: mintRouter, initSupabaseMintRoute } = require('./routes/mintRout
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Truyền chìa khóa sang khởi tạo cho Route
 initSupabaseMintRoute(SUPABASE_URL, SUPABASE_ANON_KEY);
 app.use('/api', mintRouter);
 
@@ -60,7 +59,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ==========================================
 async function updateRatesToSupabase() {
   try {
-    const response = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT`);
+    const response = await axios.get(`https://binance.com`);
 
     if (response.data && response.data.price) {
       const ethPrice = parseFloat(response.data.price);
@@ -86,7 +85,6 @@ async function updateRatesToSupabase() {
   }
 }
 
-// Khởi chạy vòng lặp cập nhật tỷ giá ngầm
 console.log("🚀 Server đồng bộ tỷ giá ngầm đang khởi động...");
 updateRatesToSupabase();
 setInterval(updateRatesToSupabase, 30000);
@@ -94,18 +92,16 @@ setInterval(updateRatesToSupabase, 30000);
 // ==========================================
 // 4. LUỒNG TỰ ĐỘNG CẮT NHẠC VÀ CẬP NHẬT PREVIEW TRÊN RENDER
 // ==========================================
-const MP3Cutter = require('mp3-cutter');
-
 
 // Hàm lấy danh sách bài hát chưa có preview từ Supabase
 async function getItemsToProcess() {
   try {
-    const url = `${process.env.SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL&fullAudioURL=not.is.null&previewURL=is.null`;
+    const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL&fullAudioURL=not.is.null&previewURL=is.null`;
     const res = await fetch(url, {
       method: "GET",
       headers: {
-        apikey: process.env.SUPABASE_ANON_KEY ?? "",
-        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY ?? "",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         "Content-Type": "application/json",
       },
     });
@@ -120,11 +116,11 @@ async function getItemsToProcess() {
 // Hàm cập nhật link preview mới vào Supabase
 async function updatePreviewURL(id, previewURL) {
   try {
-    await fetch(`${process.env.SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
+    await fetch(`${SUPABASE_URL}/rest/v1/items?id=eq.${id}`, {
       method: "PATCH",
       headers: {
-        apikey: process.env.SUPABASE_ANON_KEY ?? "",
-        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY ?? "",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ previewURL }),
@@ -134,7 +130,7 @@ async function updatePreviewURL(id, previewURL) {
   }
 }
 
-// Vòng lặp chạy ngầm tuần tự tự động tải và cắt nhạc
+// Vòng lặp chạy ngầm tự động quét dữ liệu
 async function autoProcessMissingPreviews() {
   try {
     const items = await getItemsToProcess();
@@ -147,13 +143,29 @@ async function autoProcessMissingPreviews() {
 
       for (const row of items) {
         try {
-          console.log(`⏳ Đang xử lý tải file và cắt nhạc cho bài viết ID [${row.id}]...`);
-          
           const inputPath = path.join(tmpDir, `input_${row.id}.mp3`);
           const outputPath = path.join(tmpDir, `preview_${row.id}.mp3`);
 
+          console.log(`⏳ Đang kết nối tải file gốc cho ID [${row.id}]...`);
+          
           // Tải file gốc từ IPFS về Render
-          const response = await axios({ url: row.fullAudioURL, method: 'GET', responseType: 'stream' });
+          const response = await axios({ 
+            url: row.fullAudioURL, 
+            method: 'GET', 
+            responseType: 'stream',
+            timeout: 15000 
+          });
+
+          // KIỂM TRA ĐỊNH DẠNG FILE TỪ SERVER XEM CÓ PHẢI LÀ ẢNH KHÔNG
+          const contentType = response.headers['content-type'];
+          if (contentType && contentType.includes('image')) {
+            console.error(`❌ BỎ QUA ID [${row.id}]: Phát hiện link chứa FILE ẢNH chứ không phải NHẠC!`);
+            // Điền chữ lỗi vào database để lần sau vòng lặp bỏ qua không quét lại bản ghi này nữa
+            await updatePreviewURL(row.id, 'Error: Source file is an image');
+            continue; // Nhảy sang bài tiếp theo luôn
+          }
+
+          // Ghi file nhạc hợp lệ xuống ổ đĩa tạm
           const writer = fs.createWriteStream(inputPath);
           response.data.pipe(writer);
           await new Promise((resolve, reject) => {
@@ -161,27 +173,33 @@ async function autoProcessMissingPreviews() {
             writer.on('error', reject);
           });
 
-          // Cắt nhạc bằng thư viện thuần JS lấy từ giây 0 đến giây 45 cực nhanh
+          // Tiến hành cắt nhạc lấy 45 giây đầu
+          console.log(`✂️ Đang tiến hành cắt 45s nhạc cho ID [${row.id}]...`);
           MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
 
           // Upload bản cắt preview lên Pinata IPFS
+          console.log(`📤 Đang đẩy bản preview lên Pinata cho ID [${row.id}]...`);
           const newPreviewURL = await uploadToPinata(outputPath);
 
           // Cập nhật ngược lại vào Database Supabase
           await updatePreviewURL(row.id, newPreviewURL);
-          console.log(`🎉 THÀNH CÔNG: Đã tạo preview cho bài viết ID [${row.id}] -> ${newPreviewURL}`);
+          console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
 
-          // Dọn dẹp dứt điểm file tạm trên ổ đĩa
+          // Dọn dẹp dứt điểm file tạm trên ổ đĩa để giải phóng bộ nhớ
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
           if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
         } catch (itemError) {
           console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
+          // Nếu lỗi mạng hoặc link chết hẳn, đánh dấu để không quét lại gây treo vòng lặp
+          if (itemError.message.includes('404') || itemError.message.includes('timeout')) {
+            await updatePreviewURL(row.id, 'Error: Broken link');
+          }
         }
       }
     }
   } catch (error) {
-    console.error("❌ Lỗi luồng chạy ngầm:", error.message);
+    console.error("❌ Lỗi luồng chạy ngầm tổng:", error.message);
   }
 }
 
