@@ -57,7 +57,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ==========================================
 async function updateRatesToSupabase() {
   try {
-    const response = await axios.get(`https://binance.com`);
+    const response = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT`);
     if (response.data && response.data.price) {
       const ethPrice = parseFloat(response.data.price);
       const tỷ_giá_usd_vnd = 25400;
