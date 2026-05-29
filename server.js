@@ -204,11 +204,13 @@ async function autoProcessMissingPreviews() {
           if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
         } catch (itemError) {
-          console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
-          if (itemError.message.includes('404') || itemError.message.includes('timeout')) {
-            await updateItemData(row.id, 'Error: Broken link');
-          }
-        }
+  console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
+  // Nếu bị 403 (chặn) hoặc 404 (chết link), ghi nhận lỗi để qua lượt, nhường chỗ cho file khác
+  if (itemError.message.includes('403') || itemError.message.includes('404')) {
+    await updateItemData(row.id, 'Error: Chặn truy cập hoặc hỏng link');
+  }
+}
+
       }
     }
   } catch (error) {
