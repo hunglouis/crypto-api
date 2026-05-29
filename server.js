@@ -83,7 +83,8 @@ setInterval(updateRatesToSupabase, 30000);
 
 async function getItemsToProcess() {
   try {
-    const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL,thumbURL&fullAudioURL=not.is.null&previewURL=is.null`;
+        const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL,thumbURL&fullAudioURL=not.is.null&or=(previewURL.is.null,previewURL.eq.EMPTY,thumbURL.is.null,thumbURL.eq.EMPTY)`;
+
     const res = await fetch(url, {
       method: "GET",
       headers: {
