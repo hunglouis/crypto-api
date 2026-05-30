@@ -7,6 +7,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const MP3Cutter = require('mp3-cutter');
+const { ethers } = require('ethers'); // Chèn thêm dòng này để giải mã chữ ký Web3
+
 
 const app = express();
 const uploadRoute = require('./routes/upload');
@@ -261,6 +263,103 @@ app.post('/api/trigger-cut', async (req, res) => {
 // ĐOẠN 4: KHỞI ĐỘNG BỘ ĐẾM VÀ SERVER
 // (Giữ nguyên phần này ở cuối cùng file)
 setInterval(autoProcessMissingPreviews, 30000);
+
+// =========================================================================
+// 🚀 [BẢO MẬT CORE] API XÁC THỰC VÍ VÀ ĐỔ LUỒNG STREAM BẢN FULL CHO OWNER/CREATOR
+// =========================================================================
+app.post('/api/access-full-content', async (req, res) => {
+  try {
+    const { walletAddress, signature, message, tokenId, nftId } = req.body;
+
+    // Kiểm tra dữ liệu đầu vào cơ bản từ Client gửi lên
+    if (!walletAddress || !signature || !message || !tokenId || !nftId) {
+      return res.status(400).json({ message: "Thiếu thông tin xác thực ví hoặc ID sản phẩm!" });
+    }
+
+    // ----------------------------------------------------
+    // BƯỚC 1: GIẢI MÃ CHỮ KÝ VÍ (VERIFY SIGNATURE)
+    // ----------------------------------------------------
+    const recoveredAddress = ethers.verifyMessage(message, signature);
+    if (recoveredAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      return res.status(401).json({ message: "Chữ ký xác thực ví không trùng khớp hoặc giả mạo!" });
+    }
+
+    // ----------------------------------------------------
+    // BƯỚC 2: TRUY VẤN SUPABASE LẤY ĐỊA CHỈ CONTRACT & LINK GỐC TỪ BẢNG ITEMS
+    // ----------------------------------------------------
+    const { data: nftRecord, error } = await supabase
+      .from('items') // Tên bảng quản lý sản phẩm NFT của bạn
+      .select('id, contract_address, fullAudioURL, tokenId') 
+      .eq('id', nftId)
+      .single();
+
+    if (error || !nftRecord) {
+      console.error("❌ Lỗi lấy data từ Supabase:", error?.message);
+      return res.status(404).json({ message: "Không tìm thấy dữ liệu NFT trong hệ thống!" });
+    }
+
+    const DYNAMIC_CONTRACT_ADDRESS = nftRecord.contract_address;
+    const secureFullUrl = nftRecord.fullAudioURL;
+
+    if (!DYNAMIC_CONTRACT_ADDRESS) {
+      return res.status(400).json({ message: "NFT này chưa được cấu hình địa chỉ contract_address trong database!" });
+    }
+    if (!secureFullUrl) {
+      return res.status(404).json({ message: "Sản phẩm này không tồn tại đường dẫn file gốc ẩn!" });
+    }
+
+    // ----------------------------------------------------
+    // BƯỚC 3: KIỂM TRA QUYỀN SỞ HỮU ON-CHAIN (BLOCKCHAIN SEPOLIA CHECK)
+    // ----------------------------------------------------
+    const PROVIDER_URL = "https://ankr.com"; // RPC kết nối mạng Sepolia
+    const provider = new ethers.JsonRpcProvider(PROVIDER_URL);
+    
+    // ABI tối giản để gọi hàm kiểm tra chủ sở hữu NFT trên chuỗi khối
+    const CONTRACT_ABI = ["function ownerOf(uint256 tokenId) view returns (address)"];
+    const contract = new ethers.Contract(DYNAMIC_CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+
+    let isEligible = false;
+
+    try {
+      const ownerAddress = await contract.ownerOf(tokenId);
+      if (ownerAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        isEligible = true;
+      }
+    } catch (blockchainErr) {
+      console.log(`⚠️ TokenId [${tokenId}] không tìm thấy Owner, có thể NFT chưa được đúc hoàn toàn lên mạng.`);
+    }
+
+    // NẾU VÍ KHÔNG PHẢI CHỦ SỞ HỮU TRÊN CHUỖI, CHẶN TRUY CẬP NGAY LẬP TỨC
+    if (!isEligible) {
+      return res.status(403).json({ 
+        message: "Tài khoản ví của bạn không sở hữu NFT này. Xin vui lòng mua NFT để thưởng thức bản Full!" 
+      });
+    }
+
+    // ----------------------------------------------------
+    // BƯỚC 4: KÉO FILE ẨN VÀ ĐỔ LUỒNG NHỊ PHÂN (STREAM) VỀ CLIENT
+    // ----------------------------------------------------
+    console.log(`🔒 [Gác Cổng] Ví ${walletAddress} hợp lệ! Đang truyền luồng file gốc bảo mật...`);
+    
+    const fileResponse = await axios({
+      method: "GET",
+      url: secureFullUrl,
+      responseType: "stream"
+    });
+
+    // Cấu hình Header an toàn ngăn chặn tải lậu và lưu cache rác trên trình duyệt lạ
+    res.setHeader("Content-Type", fileResponse.headers["content-type"] || "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+
+    // Đổ luồng dữ liệu (Pipe stream) nhị phân trực tiếp về trình duyệt của Client
+    fileResponse.data.pipe(res);
+
+  } catch (globalError) {
+    console.error("❌ Lỗi nghiêm trọng tại hệ thống gác cổng bảo mật:", globalError.message);
+    return res.status(500).json({ message: "Có lỗi xảy ra tại hệ thống API bảo mật máy chủ ngầm." });
+  }
+});
+
 
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3002;
