@@ -42,6 +42,38 @@ app.get('/api/eth-price', (req, res) => {
   res.json({ price: 3002 });
 });
 
+// Thêm cổng đón nhận lệnh cắt nhạc ngay lập tức từ Server chính
+app.post('/api/trigger-cut', async (req, res) => {
+  const { trackId } = req.body;
+
+  if (!trackId) {
+    return res.status(400).json({ success: false, message: "Thiếu trackId rồi bạn ơi!" });
+  }
+
+  console.log(`⚡ [Nhận Lệnh] Server chính vừa báo có bài mới! ID: [${trackId}]. Tiến hành cắt nhạc ngay...`);
+
+  // Phản hồi ngay cho Server chính biết là đã nhận lệnh để giải phóng Server chính
+  res.status(200).json({ success: true, message: "Đã nhận lệnh, đang xử lý ngầm đây!" });
+
+  // Chạy hàm xử lý cắt nhạc riêng cho bài hát này (Xử lý bất đồng bộ ngầm)
+  try {
+    // Gọi hàm lấy đúng dữ liệu của bài hát này từ Supabase lên để cắt
+    const { data: row, error } = await supabase
+      .from('music_tracks') // Tên bảng của bạn
+      .select('*')
+      .eq('id', trackId)
+      .single();
+
+    if (row && !error) {
+      // Gọi lại logic cắt nhạc có sẵn của bạn (truyền row vào để xử lý đơn lẻ)
+      await processSingleTrack(row); 
+    }
+  } catch (err) {
+    console.error(`❌ Lỗi khi xử lý cắt nhạc cấp tốc cho ID [${trackId}]:`, err.message);
+  }
+});
+
+
 // KÍCH HOẠT API MINT TỰ ĐỘNG
 const { router: mintRouter, initSupabaseMintRoute } = require('./routes/mintRoutes');
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -119,105 +151,115 @@ async function updateItemData(id, previewURL, thumbURL = null) {
   }
 }
 
-async function autoProcessMissingPreviews() {
+// HÀM BỌC: Xử lý cắt nhạc và upload cho ĐÚNG MỘT bài viết được truyền vào
+const processSingleTrack = async (row) => {
+  const inputPath = `input_${row.id}.mp3`;
+  const outputPath = `output_${row.id}.mp3`;
+  const isVideo = row.fullAudioURL?.includes('.mp4') || row.fullAudioURL?.includes('video');
+
   try {
-    const items = await getItemsToProcess();
-    
-    if (items && items.length > 0) {
-      console.log(`🎵 [Render] Phát hiện ${items.length} bài cần tạo preview. Đang tiến hành phân loại file...`);
-      
-      const tmpDir = path.join(__dirname, 'tmp_processing');
-      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    // 1. TẢI FILE GỐC (Đã thêm cấu hình chống chặn 403)
+    const response = await axios.get(row.fullAudioURL, { 
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*'
+      }
+    });
 
-      for (const row of items) {
-        try {
-          console.log(`⏳ Đang kết nối tải file cho ID [${row.id}]...`);
-          
-          const response = await axios({ 
-            url: row.fullAudioURL, 
-            method: 'GET', 
-            responseType: 'stream',
-            timeout: 20000 
-          });
+    // 2. GHI FILE XUỐNG ĐĨA TẠM
+    const writer = fs.createWriteStream(inputPath);
+    response.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
 
-          const contentType = (response.headers['content-type'] || '').toLowerCase();
-          console.log(`ℹ️ Định dạng file nhận diện: ${contentType} tại ID [${row.id}]`);
-
-          // ==========================================
-          // BỘ LỌC TỰ ĐỘNG SỬA SAI: CHỈ CHẤP NHẬN AUDIO HOẶC VIDEO MP4
-          // ==========================================
-          const isAudio = contentType.includes('audio');
-          const isVideo = contentType.includes('video/mp4') || row.fullAudioURL.endsWith('.mp4');
-
-          // Nếu file tải về KHÔNG PHẢI nhạc hoặc video (Nó là PNG, JPG, PDF, TXT, DOCX...)
-          if (!isAudio && !isVideo) {
-            console.log(`💡 [Tự Sửa Sai] Phát hiện file ĐIỀN NHẦM (${contentType}) tại ô Nhạc của ID [${row.id}].`);
-            console.log(`➡️ Đang tự động gom file này sang làm ảnh bìa (thumbURL)...`);
-            
-            await updateItemData(
-              row.id, 
-              'Error: Misplaced file (Not audio/video), moved to thumbnail', 
-              row.fullAudioURL // Đẩy link PDF, PNG... này sang làm thumbnail!
-            );
-            continue; 
-          }
-
-          // Xác định đuôi file tạm dựa trên định dạng thực tế
-          const ext = isVideo ? '.mp4' : '.mp3';
-          const inputPath = path.join(tmpDir, `input_${row.id}${ext}`);
-          const outputPath = path.join(tmpDir, `preview_${row.id}.mp3`);
-
-          // Ghi file xuống đĩa tạm
-          const writer = fs.createWriteStream(inputPath);
-          response.data.pipe(writer);
-          await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-          });
-
-          // TIẾN HÀNH CẮT NHẠC
-          console.log(`✂️ Đang trích xuất cắt 45s từ file nhạc gốc cho ID [${row.id}]...`);
-          
-          try {
-            MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
-          } catch (cutError) {
-            if (isVideo) {
-              console.warn(`⚠️ Bản MP4 của ID [${row.id}] quá phức tạp. Gán tạm bản full làm preview để tránh treo!`);
-              await updateItemData(row.id, row.fullAudioURL);
-              if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-              continue;
-            } else {
-              throw cutError;
-            }
-          }
-
-          // UPLOAD BẢN PREVIEW LÊN PINATA
-          console.log(`📤 Đang đẩy bản preview lên Pinata cho ID [${row.id}]...`);
-          const newPreviewURL = await uploadToPinata(outputPath);
-
-          // CẬP NHẬT DATABASE
-          await updateItemData(row.id, newPreviewURL);
-          console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
-
-          // Dọn dẹp file tạm
-          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-
-        } catch (itemError) {
-  console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
-  // Nếu bị 403 (chặn) hoặc 404 (chết link), ghi nhận lỗi để qua lượt, nhường chỗ cho file khác
-  if (itemError.message.includes('403') || itemError.message.includes('404')) {
-    await updateItemData(row.id, 'Error: Chặn truy cập hoặc hỏng link');
-  }
-}
-
+    // 3. TIẾN HÀNH CẮT NHẠC 45 GIÂY
+    console.log(`✂️ Đang trích xuất cắt 45s từ file nhạc gốc cho ID [${row.id}]...`);
+    try {
+      MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
+    } catch (cutError) {
+      if (isVideo) {
+        console.warn(`⚠️ Bản MP4 của ID [${row.id}] quá phức tạp. Gán tạm bản full làm preview!`);
+        await updateItemData(row.id, row.fullAudioURL);
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        return;
+      } else {
+        throw cutError;
       }
     }
-  } catch (error) {
-    console.error("❌ Lỗi luồng chạy ngầm tổng:", error.message);
-  }
-}
 
+    // 4. UPLOAD BẢN PREVIEW LÊN PINATA
+    console.log(`📤 Đang đẩy bản preview lên Pinata cho ID [${row.id}]...`);
+    const newPreviewURL = await uploadToPinata(outputPath);
+
+    // 5. CẬP NHẬT DATABASE SUPABASE LẤP ĐẦY Ô TRỐNG
+    await updateItemData(row.id, newPreviewURL);
+    console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
+
+  } catch (itemError) {
+    console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
+    // Nếu dính lỗi chặn 403 hoặc 404, ghi nhận để qua lượt, không làm nghẽn hệ thống
+    if (itemError.message.includes('403') || itemError.message.includes('404')) {
+      await updateItemData(row.id, 'Error: Chặn truy cập hoặc hỏng link');
+    }
+  } finally {
+    // Luôn dọn dẹp file tạm để tránh đầy bộ nhớ dẫn đến lỗi >100MB như trước
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
+};
+
+// HÀM QUÉT ĐỊNH KỲ: Chỉ làm nhiệm vụ gom danh sách ô trống rồi ném vào hàm bọc
+const autoProcessMissingPreviews = async () => {
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/items?select=id,fullAudioURL,previewURL,thumbURL&fullAudioURL=not.is.null&or=(previewURL.is.null,previewURL.eq.EMPTY,thumbURL.is.null,thumbURL.eq.EMPTY)`;
+    
+    const res = await axios.get(url, { headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` } });
+    const rows = res.data;
+
+    if (!rows || rows.length === 0) return;
+
+    console.log(`🔄 [Quét Định Kỳ] Tìm thấy ${rows.length} file cần xử lý...`);
+
+    for (const row of rows) {
+      // 🌟 GỌI HÀM BỌC XỬ LÝ CHO TỪNG FILE MỘT CÁCH GỌN GÀNG
+      await processSingleTrack(row);
+    }
+
+  } catch (globalError) {
+    console.error("❌ Lỗi luồng chạy ngầm tổng:", globalError.message);
+  }
+};
+// ==========================================
+// ĐOẠN 3: CỔNG API NHẬN LỆNH CẤP TỐC (Webhook)
+// Dán đoạn này ngay dưới 2 hàm trên để hoàn tất phối hợp 2 server
+app.post('/api/trigger-cut', async (req, res) => {
+  const { trackId } = req.body;
+  if (!trackId) return res.status(400).json({ success: false });
+
+  console.log(`⚡ [Nhận Lệnh] Cắt nhạc cấp tốc cho ID: [${trackId}]`);
+  res.status(200).json({ success: true, message: "Đang xử lý ngầm đây!" });
+
+  try {
+    // Gọi Supabase lấy đúng bài hát vừa tạo sang để cắt lập tức
+    const resTrack = await axios.get(`${SUPABASE_URL}/rest/v1/items?id=eq.${trackId}`, {
+      headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    const row = resTrack.data?.[0];
+    if (row) {
+      await processSingleTrack(row); // Gọi hàm bọc chạy ngay!
+    }
+  } catch (err) {
+    console.error("Lỗi cắt cấp tốc:", err.message);
+  }
+});
+
+
+// ==========================================
+// ĐOẠN 4: KHỞI ĐỘNG BỘ ĐẾM VÀ SERVER
+// (Giữ nguyên phần này ở cuối cùng file)
 setInterval(autoProcessMissingPreviews, 30000);
 
 const server = http.createServer(app);
