@@ -21,13 +21,7 @@ const uploadToPinata = typeof uploadToPinataModule === 'function' ? uploadToPina
 // ==========================================
 // 1. CẤU HÌNH MỞ KHÓA CORS CHUẨN
 // ==========================================
-app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
-  methods: ['GET', 'POST', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'x-user-wallet', 'Authorization'],
-  credentials: true
-}));
-
+app.use(cors());
 app.use(express.json());
 
 // ==========================================
@@ -40,7 +34,7 @@ app.get('/', (req, res) => {
   res.send('Crypto & Music API Worker Is Running...');
 });
 
-app.get('/api/eth-price', (req, res) => {
+app.get(/api/eth-price, (req, res) => {
   res.json({ price: 3002 });
 });
 
