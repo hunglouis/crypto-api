@@ -34,7 +34,7 @@ app.get('/', (req, res) => {
   res.send('Crypto & Music API Worker Is Running...');
 });
 
-app.get(/api/eth-price, (req, res) => {
+app.get("/api/eth-price", (req, res) => {
   res.json({ price: 3002 });
 });
 
