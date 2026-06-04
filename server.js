@@ -75,19 +75,23 @@ app.post('/api/trigger-cut', async (req, res) => {
   res.status(200).json({ success: true, message: "Đã nhận lệnh, đang xử lý ngầm đây!" });
 
   try {
+    // 🌟 ĐÃ SỬA: Đổi từ music_tracks thành items cho đúng database của bạn
     const { data: row, error } = await supabase
-      .from('music_tracks') 
+      .from('items') 
       .select('*')
       .eq('id', trackId)
       .single();
 
     if (row && !error) {
       await processSingleTrack(row); 
+    } else {
+      console.warn(`⚠️ Không tìm thấy bài viết nào có ID [${trackId}] trong bảng items.`);
     }
   } catch (err) {
     console.error(`❌ Lỗi khi xử lý cắt nhạc cấp tốc cho ID [${trackId}]:`, err.message);
   }
 });
+
 
 // KÍCH HOẠT API MINT TỰ ĐỘNG
 const { router: mintRouter, initSupabaseMintRoute } = require('./routes/mintRoutes');
@@ -124,7 +128,7 @@ updateRatesToSupabase();
 setInterval(updateRatesToSupabase, 30000);
 
 // ==========================================
-// 4. LUỒNG TỰ ĐỘNG XỬ LÝ NHẠC VÀ ĐIỀU HƯỚNG FILE RÁC (PDF, PNG...)
+// 4. LUỒNG TỰ ĐỘNG XỬ LÝ NHẠC VÀ ĐIỀU HƯỚNG FILE RÁC (BẢNG ITEMS)
 // ==========================================
 async function getItemsToProcess() {
   try {
@@ -140,6 +144,7 @@ async function getItemsToProcess() {
     if (!res.ok) return [];
     return res.json();
   } catch (err) {
+    console.error("❌ Lỗi lấy danh sách từ bảng items:", err.message);
     return [];
   }
 }
@@ -170,7 +175,7 @@ const processSingleTrack = async (row) => {
   const isVideo = row.fullAudioURL?.includes('.mp4') || row.fullAudioURL?.includes('video');
 
   try {
-    // 1. TẢI FILE GỐC (Đã thêm cấu hình chống chặn 403)
+    console.log(`📥 Đang tải file gốc cho ID [${row.id}] từ URL...`);
     const response = await axios.get(row.fullAudioURL, { 
       responseType: 'stream',
       headers: {
@@ -186,7 +191,6 @@ const processSingleTrack = async (row) => {
       writer.on('error', reject);
     });
 
-    // 2. TIẾN HÀNH CẮT NHẠC 45 GIÂY
     console.log(`✂️ Đang trích xuất cắt 45s từ file nhạc gốc cho ID [${row.id}]...`);
     try {
       MP3Cutter.cut({ src: inputPath, target: outputPath, start: 0, end: 45 });
@@ -201,18 +205,16 @@ const processSingleTrack = async (row) => {
       }
     }
 
-    // 3. UPLOAD BẢN PREVIEW LÊN PINATA
     console.log(`📤 Đang đẩy bản preview lên Pinata cho ID [${row.id}]...`);
     const newPreviewURL = await uploadToPinata(outputPath);
 
-    // 4. CẬP NHẬT DATABASE SUPABASE LẤP ĐẦY Ô TRỐNG
     await updateItemData(row.id, newPreviewURL);
     console.log(`🎉 THÀNH CÔNG RỰC RỠ: Đã có preview cho ID [${row.id}] -> ${newPreviewURL}`);
 
   } catch (itemError) {
     console.error(`❌ Lỗi tại bài viết ID [${row.id}]:`, itemError.message);
     if (itemError.message.includes('403') || itemError.message.includes('404')) {
-      await updateItemData(row.id, 'Error: Chặn truy cập hoặc hỏng link');
+      await updateItemData(row.id, 'Không có file nhạc');
     }
   } finally {
     if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -220,11 +222,15 @@ const processSingleTrack = async (row) => {
   }
 };
 
-// ĐÃ VÁ LỖI CẮT CHỮ: Hoàn thiện hàm quét tự động xử lý rác ngầm
+// Hàm quét định kỳ xử lý rác ngầm (Đã vá lỗi đóng ngoặc cú pháp)
 const autoProcessMissingPreviews = async () => {
   try {
     const rows = await getItemsToProcess();
-    if (!rows || rows.length === 0) return;
+    if (!rows || rows.length === 0) {
+      // Thêm log này để bạn biết hệ thống VẪN ĐANG QUÉT nhưng không có bài nào bị thiếu preview
+      console.log(`🔄 [Quét Định Kỳ] Mọi bài viết trong bảng 'items' đều đã có Preview đầy đủ.`);
+      return;
+    }
 
     console.log(`🔄 [Quét Định Kỳ] Tìm thấy ${rows.length} file cần xử lý...`);
     for (const row of rows) {
@@ -234,6 +240,11 @@ const autoProcessMissingPreviews = async () => {
     console.error("❌ Lỗi luồng chạy tự động quét ngầm:", globalError.message);
   }
 };
+
+// 🌟 THÀNH PHẦN QUAN TRỌNG NHẤT BỊ THIẾU: Kích hoạt luồng chạy lặp lại định kỳ
+autoProcessMissingPreviews(); // Chạy ngay lập tức 1 lần khi khởi động
+setInterval(autoProcessMissingPreviews, 60000); // Lặp lại đều đặn sau mỗi 60 giây (1 phút)
+
 
 // BẬT SERVER ĐÓN CỔNG
 const PORT = process.env.PORT || 3002;
