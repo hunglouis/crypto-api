@@ -226,24 +226,25 @@ const processSingleTrack = async (row) => {
 const autoProcessMissingPreviews = async () => {
   try {
     const rows = await getItemsToProcess();
-    if (!rows || rows.length === 0) {
-      // Thêm log này để bạn biết hệ thống VẪN ĐANG QUÉT nhưng không có bài nào bị thiếu preview
-      console.log(`🔄 [Quét Định Kỳ] Mọi bài viết trong bảng 'items' đều đã có Preview đầy đủ.`);
-      return;
-    }
+    if (!rows || rows.length === 0) return;
 
-    console.log(`🔄 [Quét Định Kỳ] Tìm thấy ${rows.length} file cần xử lý...`);
-    for (const row of rows) {
-      await processSingleTrack(row);
-    }
+    // 🌟 TỐI ƯU: Chỉ lấy duy nhất bài đầu tiên trong hàng đợi để xử lý
+    const singleRow = rows[0]; 
+    console.log(`🔄 [Quét Định Kỳ] Tìm thấy ${rows.length} file chờ. Tiến hành xử lý trước ID [${singleRow.id}]...`);
+    
+    // Xử lý xong 1 bài này, hàm sẽ kết thúc ngay để trả lại tài nguyên cho hệ thống
+    await processSingleTrack(singleRow);
+
   } catch (globalError) {
     console.error("❌ Lỗi luồng chạy tự động quét ngầm:", globalError.message);
   }
 };
 
-// 🌟 THÀNH PHẦN QUAN TRỌNG NHẤT BỊ THIẾU: Kích hoạt luồng chạy lặp lại định kỳ
-autoProcessMissingPreviews(); // Chạy ngay lập tức 1 lần khi khởi động
-setInterval(autoProcessMissingPreviews, 60000); // Lặp lại đều đặn sau mỗi 60 giây (1 phút)
+// Giãn cách thời gian quét preview ra xa hơn (ví dụ: 2 phút quét 1 lần)
+// Việc này giúp giá ETH (30s/lần) luôn có khoảng trống rộng rãi để chạy
+autoProcessMissingPreviews(); 
+setInterval(autoProcessMissingPreviews, 120000); 
+
 
 
 // BẬT SERVER ĐÓN CỔNG
